@@ -7,10 +7,10 @@ import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;
 import org.springframework.context.annotation.Bean;
 
 @SpringBootApplication
-public class ApiPlatformGatewayApplication {
+public class APGApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(ApiPlatformGatewayApplication.class, args);
+        SpringApplication.run(APGApplication.class, args);
     }
 
     @Bean
