@@ -1,14 +1,19 @@
 package com.crane.apiplatformgateway;
 
 import cn.hutool.core.util.StrUtil;
-import com.crane.apiplatformsdk.client.ApiClient;
-import com.crane.apiplatformsdk.constant.ErrorStatus;
-import com.crane.apiplatformsdk.exception.BusinessException;
-import com.crane.apiplatformsdk.model.dto.SignDto;
+import com.crane.apiplatformcommon.constant.ErrorStatus;
+import com.crane.apiplatformcommon.exception.BusinessException;
+import com.crane.apiplatformcommon.model.dto.SignDto;
+import com.crane.apiplatformcommon.model.vo.InterfaceInfoVo;
+import com.crane.apiplatformcommon.model.vo.UserVo;
+import com.crane.apiplatformcommon.service.InterfaceInfoService;
+import com.crane.apiplatformcommon.service.UserInterfaceInfoService;
+import com.crane.apiplatformcommon.service.UserService;
 import com.crane.constant.RedisKey;
 import com.crane.constant.SignHeader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.dubbo.config.annotation.DubboReference;
 import org.reactivestreams.Publisher;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -44,9 +49,18 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class CustomGlobalFilter implements GlobalFilter, Ordered {
 
-    private final List<String> whiteList = List.of("127.0.0.1");
+    private final List<String> whiteList = List.of("127.0.0.1","0:0:0:0:0:0:0:1");
 
     private final StringRedisTemplate redisTemplate;
+
+    @DubboReference
+    private UserService userService;
+
+    @DubboReference
+    private UserInterfaceInfoService userInterfaceInfoService;
+
+    @DubboReference
+    private InterfaceInfoService interfaceInfoService;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
@@ -90,30 +104,40 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
         zSet.removeRange(RedisKey.NONCE_Z_SET_KEY, 0, currentTime - 90000);
 
         //校验签名
-        ApiClient apiClient = new ApiClient();
         SignDto signDto = new SignDto();
-        signDto.setAccessKey(apiClient.getAccessKey());
+        signDto.setAccessKey(accessKey);
         signDto.setNonce(nonce);
         signDto.setData(body);
         signDto.setTimestamp(Long.valueOf(timestamp));
-        if (!StrUtil.equals(apiClient.getSign(signDto), sign)) {
+        if (!StrUtil.equals(userService.getSign(signDto), sign)) {
             log.error("签名验证失败");
             response.setStatusCode(HttpStatus.FORBIDDEN);
             return response.setComplete();
         }
 
-        //TODO:验证请求的接口是否存在，以及请求参数是否正确？
-
+        //获取用户
+        UserVo userVo = null;
+        try {
+            userVo = userService.getUserByAccessKey(accessKey);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorStatus.NULL_ERROR, "网关用户为空");
+        }
+        //获取接口信息
+        InterfaceInfoVo interfaceInfoVo = null;
+        try {
+            String path = request.getURI().getPath();
+            int method = "POST".equalsIgnoreCase(request.getMethod().toString()) ? 1 : 0;
+            interfaceInfoVo = interfaceInfoService.interfaceSelectOne(path, method);
+        } catch (Exception e) {
+            throw new BusinessException(ErrorStatus.NULL_ERROR, "接口信息为空");
+        }
         Mono<Void> filter = chain.filter(exchange);
         //记录日志
         //调用次数增减
         if (response.getStatusCode() == HttpStatus.OK) {
-            //TODO:调用减次数逻辑
-            return handleDecoratorResponse(exchange, chain);
-        } else {
-            response.setStatusCode(HttpStatus.INTERNAL_SERVER_ERROR);
-            return response.setComplete();
+            return handleDecoratorResponse(exchange, chain, userVo.getId(), interfaceInfoVo.getId());
         }
+        return filter;
     }
 
     @Override
@@ -122,12 +146,13 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
     }
 
     /**
-     * https://blog.csdn.net/qq_19636353/article/details/126759522
+     * <a href="https://blog.csdn.net/qq_19636353/article/details/126759522">...</a>
+     * todo:这里不理解的话就先这样把，但还是建议弄懂啊
      *
      * @author CraneResigned
      * @date 2024/10/22 19:37
      **/
-    public Mono<Void> handleDecoratorResponse(ServerWebExchange exchange, GatewayFilterChain chain) {
+    public Mono<Void> handleDecoratorResponse(ServerWebExchange exchange, GatewayFilterChain chain, long interfaceId, long userId) {
         try {
             ServerHttpResponse originalResponse = exchange.getResponse();
             DataBufferFactory bufferFactory = originalResponse.bufferFactory();
@@ -142,6 +167,9 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
                         Flux<? extends DataBuffer> fluxBody = Flux.from(body);
 
                         return super.writeWith(fluxBody.buffer().map(dataBuffers -> {
+
+                            //TODO:调用减次数逻辑，在这里调用
+                            userInterfaceInfoService.userInterfaceInvokeNumChange(userId, interfaceId);
 
                             // 合并多个流集合，解决返回体分段传输
                             DataBufferFactory dataBufferFactory = new DefaultDataBufferFactory();

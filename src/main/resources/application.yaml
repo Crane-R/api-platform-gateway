@@ -1,5 +1,5 @@
 server:
-  port: 8090
+  port: 8091
 spring:
   data:
     redis:
@@ -14,9 +14,23 @@ spring:
           uri: http://localhost:8123
           predicates:
             - Path=/api/**
+  application:
+    name: api-platform-gateway
 logging:
   level:
     org:
       springframework:
         cloud:
           gateway: trace
+dubbo:
+  application:
+    name: api-platform-backend
+  protocol:
+    name: dubbo
+    port: -1
+  registry:
+    id: -registry
+    address: nacos://localhost:8848
+nacos:
+  discovery:
+    server-addr: localhost:8848
