@@ -1,6 +1,7 @@
 package com.crane.apiplatformgateway;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.crane.apiplatformcommon.constant.ErrorStatus;
 import com.crane.apiplatformcommon.exception.BusinessException;
 import com.crane.apiplatformcommon.model.dto.SignDto;
@@ -35,6 +36,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
 
@@ -47,9 +49,20 @@ import java.util.Objects;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+//@CrossOrigin(origins = "http://localhost:8000", allowCredentials = "true")
 public class CustomGlobalFilter implements GlobalFilter, Ordered {
 
-    private final List<String> whiteList = List.of("127.0.0.1","0:0:0:0:0:0:0:1");
+    private final List<String> whiteList = List.of("127.0.0.1", "0:0:0:0:0:0:0:1");
+
+    /**
+     * 只检测接口调用
+     *
+     * @author CraneResigned
+     * @date 2024/10/25 10:37
+     **/
+    private final List<String> checkList = List.of(
+            "/api/interface/invoke"
+    );
 
     private final StringRedisTemplate redisTemplate;
 
@@ -64,8 +77,13 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        //白名单过滤
         ServerHttpRequest request = exchange.getRequest();
+        //只检测执行接口方法，其他请求全部放行
+        if (!checkList.contains(request.getPath().value())) {
+            return chain.filter(exchange);
+        }
+
+        //白名单过滤
         ServerHttpResponse response = exchange.getResponse();
         String remoteAddress = Objects.requireNonNull(request.getRemoteAddress()).getHostString();
         if (!whiteList.contains(remoteAddress)) {
@@ -74,6 +92,7 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
         }
 
         //签名校验
+        //todo:前端不知道怎么传header过来，暂时校验不了
         HttpHeaders headers = request.getHeaders();
         String sign = headers.getFirst(SignHeader.SIGN);
         String accessKey = headers.getFirst(SignHeader.ACCESS_KEY);
@@ -124,10 +143,9 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
         }
         //获取接口信息
         InterfaceInfoVo interfaceInfoVo = null;
+        HashMap<String, Object> bodyMap = JSONUtil.toBean(body, HashMap.class);
         try {
-            String path = request.getURI().getPath();
-            int method = "POST".equalsIgnoreCase(request.getMethod().toString()) ? 1 : 0;
-            interfaceInfoVo = interfaceInfoService.interfaceSelectOne(path, method);
+            interfaceInfoVo = interfaceInfoService.interfaceSelectOne(Long.parseLong(bodyMap.get("interfaceId").toString()));
         } catch (Exception e) {
             throw new BusinessException(ErrorStatus.NULL_ERROR, "接口信息为空");
         }
@@ -152,7 +170,7 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
      * @author CraneResigned
      * @date 2024/10/22 19:37
      **/
-    public Mono<Void> handleDecoratorResponse(ServerWebExchange exchange, GatewayFilterChain chain, long interfaceId, long userId) {
+    public Mono<Void> handleDecoratorResponse(ServerWebExchange exchange, GatewayFilterChain chain, long userId, long interfaceId) {
         try {
             ServerHttpResponse originalResponse = exchange.getResponse();
             DataBufferFactory bufferFactory = originalResponse.bufferFactory();
@@ -168,7 +186,7 @@ public class CustomGlobalFilter implements GlobalFilter, Ordered {
 
                         return super.writeWith(fluxBody.buffer().map(dataBuffers -> {
 
-                            //TODO:调用减次数逻辑，在这里调用
+                            //TODO:调用减次数逻辑，在这里调用 ，待测试
                             userInterfaceInfoService.userInterfaceInvokeNumChange(userId, interfaceId);
 
                             // 合并多个流集合，解决返回体分段传输

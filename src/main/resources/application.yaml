@@ -7,11 +7,25 @@ spring:
       port: 6379
   cloud:
     gateway:
+      globalcors:
+        #        解决option预检请求被拦截的问题
+        add-to-simple-url-handler-mapping: true
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns:
+              - 'http://localhost:8000/'
+            allow-credentials: true
+            allowed-methods:
+              - "OPTIONS"
+              - "GET"
+              - "POST"
+            allowed-headers:
+              - "*"
       default-filters:
         - AddResponseHeader=source, api_platform
       routes:
         - id: api_route
-          uri: http://localhost:8123
+          uri: http://localhost:8080
           predicates:
             - Path=/api/**
   application:
@@ -24,13 +38,13 @@ logging:
           gateway: trace
 dubbo:
   application:
-    name: api-platform-backend
+    name: api-platform-gateway
   protocol:
     name: dubbo
     port: -1
   registry:
     id: -registry
-    address: nacos://localhost:8848
+    address: nacos://localhost:8848?username=nacos&password=nacos
 nacos:
   discovery:
-    server-addr: localhost:8848
+    server-addr: localhost:8848?username=nacos&password=nacos
